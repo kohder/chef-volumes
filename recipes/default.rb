@@ -2,7 +2,7 @@
 # Cookbook Name:: volumes
 # Recipe:: default
 #
-# Copyright 2011, Rob Lewis <rob@kohder.com>
+# Copyright 2012, Rob Lewis <rob@kohder.com>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,53 +28,77 @@ node_volume_plans.each do |node_volume_plan_name|
 
   Chef::Log.info("Applying volume plan: #{node_volume_plan_name}")
 
-  volume_plan['lvm_volume_groups'].each do |lvm_volume_group|
-    physical_volumes = Array(lvm_volume_group['physical_volumes'])
-    unless physical_volumes.empty?
+  unless volume_plan['ebs_volumes'].nil?
+    node.run_state['volumes'] ||= {}
+    access_key = node.run_state['volumes']['aws_access_key'] || node['volumes']['aws_access_key']
+    secret_key = node.run_state['volumes']['aws_secret_access_key'] || node['volumes']['aws_secret_access_key']
 
-      lvm_pv 'pvcreate' do
-        devices physical_volumes
-        action :create
+    if access_key.nil? || access_key.empty? || secret_key.nil? || secret_key.empty?
+      raise 'The Volumes cookbook cannot create EBS volumes without having AWS keys set.'
+    end
+
+    volume_plan['ebs_volumes'].each do |ebs_volume|
+      aws_ebs_volume "Create #{ebs_volume['size']}GB EBS volume for #{node['fqdn']} as #{ebs_volume['device']}" do
+        aws_access_key        access_key
+        aws_secret_access_key secret_key
+        size                  ebs_volume['size'].to_i
+        availability_zone     ebs_volume['zone']
+        device                ebs_volume['device']
+        description           "#{node['fqdn']}_#{ebs_volume['device']}"
+        action [:create, :attach]
       end
+    end
+  end
 
-      lvm_vg 'vgcreate' do
-        devices physical_volumes
-        volume_group_name lvm_volume_group['name']
-        action :create
-      end
+  unless volume_plan['lvm_volume_groups'].nil?
+    volume_plan['lvm_volume_groups'].each do |lvm_volume_group|
+      physical_volumes = Array(lvm_volume_group['physical_volumes'])
+      unless physical_volumes.empty?
 
-      logical_volumes = Array(lvm_volume_group['logical_volumes'])
-      logical_volumes.each do |logical_volume|
-        filesystem_type = logical_volume['filesystem'] || 'xfs'
-        device_name = "/dev/mapper/#{lvm_volume_group['name']}-#{logical_volume['name']}"
-
-        execute "mkfs" do
-          command "yes | mkfs -t #{filesystem_type} #{logical_volume['filesystem_opts']} #{device_name}"
-          action :nothing
-        end
-
-        lvm_lv 'lvcreate' do
-          volume_group_name lvm_volume_group['name']
-          logical_volume_name logical_volume['name']
-          stripes logical_volume['stripes']
-          stripe_size logical_volume['stripe_size']
-          logical_extents logical_volume['logical_extents']
+        lvm_pv 'pvcreate' do
+          devices physical_volumes
           action :create
-          notifies :run, resources(:execute => "mkfs"), :immediately
         end
 
-        mount_point = logical_volume['mount']
-        if mount_point
-          mount mount_point do
-            device device_name
-            fstype filesystem_type
-            options logical_volume['mount_opts']
-            action [:mount, :enable]
+        lvm_vg 'vgcreate' do
+          devices physical_volumes
+          volume_group_name lvm_volume_group['name']
+          action :create
+        end
+
+        logical_volumes = Array(lvm_volume_group['logical_volumes'])
+        logical_volumes.each do |logical_volume|
+          filesystem_type = logical_volume['filesystem'] || 'xfs'
+          device_name = "/dev/mapper/#{lvm_volume_group['name']}-#{logical_volume['name']}"
+
+          execute "mkfs" do
+            command "yes | mkfs -t #{filesystem_type} #{logical_volume['filesystem_opts']} #{device_name}"
+            action :nothing
           end
 
-          directory mount_point do
-            mode '0777'
+          lvm_lv 'lvcreate' do
+            volume_group_name lvm_volume_group['name']
+            logical_volume_name logical_volume['name']
+            stripes logical_volume['stripes']
+            stripe_size logical_volume['stripe_size']
+            logical_extents logical_volume['logical_extents']
             action :create
+            notifies :run, resources(:execute => "mkfs"), :immediately
+          end
+
+          mount_point = logical_volume['mount']
+          if mount_point
+            mount mount_point do
+              device device_name
+              fstype filesystem_type
+              options logical_volume['mount_opts']
+              action [:mount, :enable]
+            end
+
+            directory mount_point do
+              mode '0777'
+              action :create
+            end
           end
         end
       end

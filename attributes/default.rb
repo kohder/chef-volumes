@@ -2,7 +2,7 @@
 # Cookbook Name:: volumes
 # Attributes:: default
 #
-# Copyright 2011, Rob Lewis <rob@kohder.com>
+# Copyright 2012, Rob Lewis <rob@kohder.com>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,3 +18,7 @@
 #
 
 default['volumes']['plans'] = []
+
+default['volumes']['aws_access_key'] = nil
+
+default['volumes']['aws_secret_access_key'] = nil
