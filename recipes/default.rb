@@ -45,6 +45,7 @@ node_volume_plans.each do |node_volume_plan_name|
         availability_zone     ebs_volume['zone']
         device                ebs_volume['device']
         description           "#{node['fqdn']}_#{ebs_volume['device']}"
+        timeout               5*60  # 5 mins
         action [:create, :attach]
       end
     end
@@ -52,42 +53,50 @@ node_volume_plans.each do |node_volume_plan_name|
 
   unless volume_plan['lvm_volume_groups'].nil?
     volume_plan['lvm_volume_groups'].each do |lvm_volume_group|
+      lvm_volume_group_name = lvm_volume_group['name']
       physical_volumes = Array(lvm_volume_group['physical_volumes'])
       unless physical_volumes.empty?
 
-        lvm_pv 'pvcreate' do
+        lvm_pv "pvcreate-#{lvm_volume_group_name}" do
           devices physical_volumes
           action :create
         end
 
-        lvm_vg 'vgcreate' do
+        lvm_vg "vgcreate-#{lvm_volume_group_name}" do
           devices physical_volumes
-          volume_group_name lvm_volume_group['name']
+          volume_group_name lvm_volume_group_name
           action :create
         end
 
         logical_volumes = Array(lvm_volume_group['logical_volumes'])
         logical_volumes.each do |logical_volume|
           filesystem_type = logical_volume['filesystem'] || 'xfs'
-          device_name = "/dev/mapper/#{lvm_volume_group['name']}-#{logical_volume['name']}"
+          device_name = "/dev/mapper/#{lvm_volume_group_name}-#{logical_volume['name']}"
+          device_key = device_name.gsub('/', '_')
 
-          execute "mkfs" do
+          execute "mkfs-#{device_key}" do
             command "yes | mkfs -t #{filesystem_type} #{logical_volume['filesystem_opts']} #{device_name}"
             action :nothing
           end
 
-          lvm_lv 'lvcreate' do
-            volume_group_name lvm_volume_group['name']
+          lvm_lv "lvcreate-#{device_key}" do
+            volume_group_name lvm_volume_group_name
             logical_volume_name logical_volume['name']
             stripes logical_volume['stripes']
             stripe_size logical_volume['stripe_size']
             logical_extents logical_volume['logical_extents']
             action :create
-            notifies :run, resources(:execute => "mkfs"), :immediately
+            notifies :run, resources(:execute => "mkfs-#{device_key}"), :immediately
           end
 
           mount_point = logical_volume['mount']
           if mount_point
+            directory mount_point do
+              mode '0000'
+              action :create
+              not_if { ::File.exists?(mount_point) }
+            end
+
             mount mount_point do
               device device_name
               fstype filesystem_type
