@@ -37,17 +37,11 @@ node_volume_plans.each do |node_volume_plan_name|
       raise 'The Volumes cookbook cannot create EBS volumes without having AWS keys set.'
     end
 
-    volume_plan['ebs_volumes'].each do |ebs_volume|
-      aws_ebs_volume "Create #{ebs_volume['size']}GB EBS volume for #{node['fqdn']} as #{ebs_volume['device']}" do
-        aws_access_key        access_key
-        aws_secret_access_key secret_key
-        size                  ebs_volume['size'].to_i
-        availability_zone     ebs_volume['zone']
-        device                ebs_volume['device']
-        description           "#{node['fqdn']}_#{ebs_volume['device']}"
-        timeout               5*60  # 5 mins
-        action [:create, :attach]
-      end
+    volumes_ebs "create_ebs_volumes-#{node_volume_plan_name}" do
+      aws_access_key        access_key
+      aws_secret_access_key secret_key
+      ebs_volumes           volume_plan['ebs_volumes']
+      action :create
     end
   end
 
